@@ -313,6 +313,25 @@ The system shall document a local backup and restore process.
 is tested in a separate or clean environment. - Backup files are not
 committed to source control. - Recovery steps are documented.
 
+### FR-012: Local Document RAG
+
+The system shall extract and index authorized local documents, search
+for an exact 16-digit NIK or partial name/text, and provide only
+retrieved excerpts to the locally hosted LLM for a cited explanation.
+Supported formats include PDF, TXT/Markdown/CSV, DOC/DOCX, XLS/XLSX,
+PPT/PPTX, ODT, RTF, HTML, and common image formats. Scanned PDFs and
+images use local Indonesian/English OCR.
+
+**Acceptance criteria** - Documents are indexed in PostgreSQL and
+duplicate uploads are detected. - NIK matching is token-exact (allowing
+display spaces/hyphens) and does not match a longer numeric value. -
+Search results identify the source file and page/slide where available.
+- The LLM only receives retrieved excerpts and must cite them; it cannot
+execute SQL or treat document text as instructions. - Document search
+and upload are restricted to admin/analyst roles. - Audit data excludes
+the raw name/NIK query. - Document bytes are not retained after text
+extraction; extracted sensitive text remains in the local database.
+
 ## 9. Non-Functional Requirements
 
 -   **NFR-001 Local-first:** Processing and inference run locally after
@@ -671,6 +690,15 @@ Implement these endpoints:
   GET                     `/dashboard/summary`                     Read dashboard aggregates
 
   GET                     `/audit`                                 Read admin audit trail
+
+  POST                    `/documents`                             Extract and index a local
+                                                                   document
+
+  GET                     `/documents`                             List indexed document
+                                                                   metadata
+
+  POST                    `/documents/search`                      Search excerpts and ask
+                                                                   local AI
   ----------------------------------------------------------------------------------------
 
 All endpoints except a deliberately limited local health check must
@@ -754,6 +782,8 @@ The initial Streamlit dashboard shall include:
 -   Local AI question-and-answer panel.
 -   A visible warning that AI output is explanatory and must be
     validated by an analyst.
+-   An admin/analyst document page for local upload, OCR status, exact
+    NIK/name search, evidence excerpts, and cited RAG answers.
 
 Do not display raw personal data by default.
 
@@ -780,6 +810,8 @@ Do not display raw personal data by default.
 -   Persistence of correlation results.
 -   Ollama unavailable behavior.
 -   Chat response handling.
+-   Document text extraction, OCR, exact NIK search, name search,
+    document deduplication, and role enforcement.
 -   Access-control enforcement.
 
 ### Security tests
@@ -814,6 +846,10 @@ The MVP is accepted when:
 -   AC-13: Automated tests pass.
 -   AC-14: The README provides repeatable installation, startup,
     testing, and troubleshooting instructions.
+-   AC-15: Supported document files are indexed locally and can be
+    searched by exact NIK or name with source excerpts.
+-   AC-16: Scanned PDF/image OCR and grounded local LLM answers work
+    without cloud services.
 
 ## 21. Implementation Milestones
 
