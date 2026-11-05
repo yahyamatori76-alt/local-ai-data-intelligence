@@ -73,6 +73,20 @@ def test_local_documents_are_indexed_and_searchable_with_exact_nik():
             assert exact.status_code == 201, exact.text
             document_ids.append(exact.json()["document_id"])
 
+            formatted = client.post(
+                "/documents",
+                auth=admin,
+                files={
+                    "file": (
+                        f"formatted-{uuid.uuid4().hex}.txt",
+                        f"Catatan NIK {nik[:4]}-{nik[4:8]}-{nik[8:12]}-{nik[12:]}\n".encode(),
+                        "text/plain",
+                    )
+                },
+            )
+            assert formatted.status_code == 201, formatted.text
+            document_ids.append(formatted.json()["document_id"])
+
             near = client.post(
                 "/documents",
                 auth=admin,
@@ -94,8 +108,10 @@ def test_local_documents_are_indexed_and_searchable_with_exact_nik():
             )
             assert search.status_code == 200, search.text
             assert search.json()["query_type"] == "nik"
-            assert search.json()["result_count"] == 1
-            assert search.json()["matches"][0]["document_id"] == document_ids[0]
+            assert search.json()["result_count"] == 2
+            assert {
+                match["document_id"] for match in search.json()["matches"]
+            } == set(document_ids[:2])
 
             viewer_name = f"document-viewer-{uuid.uuid4().hex[:8]}"
             viewer_password = f"{uuid.uuid4().hex}Aa9!"

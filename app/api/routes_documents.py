@@ -194,7 +194,10 @@ def search_documents(
     query = payload.query
     nik_match = NIK_PATTERN.search(query)
     nik = nik_match.group(0) if nik_match else None
-    nik_regex = f"(^|[^0-9]){nik}([^0-9]|$)" if nik else None
+    nik_pattern = r"[\s-]?".join(nik) if nik else None
+    nik_regex = (
+        f"(^|[^0-9]){nik_pattern}([^0-9]|$)" if nik_pattern else None
+    )
     escaped_query = (
         query.replace("!", "!!").replace("%", "!%").replace("_", "!_")
     )
