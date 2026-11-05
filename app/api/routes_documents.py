@@ -1,5 +1,6 @@
 """Local document ingestion, exact identifier search, and grounded answers."""
 
+import hashlib
 import logging
 import os
 import re

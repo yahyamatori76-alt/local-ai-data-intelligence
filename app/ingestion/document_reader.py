@@ -12,7 +12,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree
 
-import fitz
+import pymupdf
 import pytesseract
 from docx import Document
 from docx.opc.exceptions import PackageNotFoundError
@@ -139,8 +139,8 @@ def split_pages_into_chunks(
 
 def _extract_pdf(content: bytes) -> tuple[list[DocumentPage], int, int]:
     try:
-        document = fitz.open(stream=content, filetype="pdf")
-    except (fitz.FileDataError, RuntimeError) as exc:
+        document = pymupdf.open(stream=content, filetype="pdf")
+    except (pymupdf.FileDataError, RuntimeError) as exc:
         raise ValueError("PDF tidak dapat dibuka.") from exc
     pages: list[DocumentPage] = []
     ocr_pages = 0
