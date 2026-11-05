@@ -1,0 +1,4 @@
+event_time,severity,event_type,event_ref,authorized_join_ref,message
+2026-11-01T10:15:10+07:00,warning,api_timeout,EV-001,SESSION-101,Request timeout
+2026-11-01T11:25:00+07:00,error,db_error,EV-002,SESSION-102,Database operation failed
+2026-11-02T09:07:00+07:00,info,health_check,EV-003,SESSION-103,Health check passed

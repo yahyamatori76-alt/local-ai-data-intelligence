@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+psycopg[binary]
+sqlalchemy
+alembic
+pandas
+openpyxl
+python-multipart
+httpx
+streamlit
+plotly
+requests
+bcrypt
+pytest
