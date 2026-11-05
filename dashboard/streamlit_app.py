@@ -157,7 +157,7 @@ def main() -> None:
         page_title="Local Intelligence Platform",
         page_icon="✳",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="auto",
     )
     st.markdown(
         """
@@ -169,9 +169,9 @@ def main() -> None:
           --green:#27e0ae;--blue:#66b9ff;--amber:#eebf62;
         }
         .stApp{background:var(--bg);color:var(--text)}
-        [data-testid="stHeader"]{background:rgba(8,15,28,.92)}
+        [data-testid="stHeader"]{background:transparent}
         [data-testid="stSidebar"]{background:#0d1727;border-right:1px solid var(--border)}
-        .block-container{max-width:1800px;padding:1rem 1.4rem 2rem}
+        .block-container{max-width:1800px;padding:3.5rem 1.4rem 2rem}
         h1,h2,h3{color:var(--text)!important;letter-spacing:-.02em}
         h1{font-size:1.3rem!important}h2{font-size:1.05rem!important}
         .brand{font-size:1.08rem;line-height:1.05;font-weight:750;color:#f0f7ff}
@@ -216,7 +216,9 @@ def main() -> None:
         div[data-testid="stForm"] button{min-height:2.9rem;border-radius:9px;
           font-weight:700}
         @media(max-width:800px){
-          .block-container{padding:1rem}
+          .block-container{padding:3.5rem 1rem 2rem}
+          .topbar{align-items:flex-start;flex-direction:column}
+          .topbar>div{max-width:100%;overflow-wrap:anywhere}
           .login-intro{padding:1rem 0 .5rem}
           .login-mark{margin-bottom:1.1rem}
           .login-intro h1{font-size:2rem!important}
