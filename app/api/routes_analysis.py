@@ -175,7 +175,8 @@ def list_results(
                        r.created_at
                 FROM correlation_results AS r
                 JOIN correlation_rules AS cr ON cr.id = r.rule_id
-                WHERE (:review_status IS NULL OR r.review_status = :review_status)
+                WHERE (CAST(:review_status AS VARCHAR) IS NULL
+                       OR r.review_status = :review_status)
                 ORDER BY r.created_at DESC
                 LIMIT :limit
                 """

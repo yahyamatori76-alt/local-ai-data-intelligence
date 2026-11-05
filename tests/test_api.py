@@ -33,3 +33,12 @@ def test_admin_can_authenticate_and_read_sources():
     assert {"population", "marketplace", "system_log"}.issubset(
         {source["source_code"] for source in response.json()}
     )
+    with TestClient(app) as client:
+        assert (
+            client.get("/analysis/results", auth=(username, password)).status_code
+            == 200
+        )
+        assert client.get(
+            "/analysis/results?review_status=unreviewed",
+            auth=(username, password),
+        ).status_code == 200
