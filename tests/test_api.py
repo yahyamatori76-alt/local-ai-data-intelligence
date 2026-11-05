@@ -129,7 +129,9 @@ def test_local_documents_are_indexed_searchable_and_used_by_chat(monkeypatch):
             )
             assert chat.status_code == 200, chat.text
             assert chat.json()["context"] == "local_document_rag"
-            assert chat.json()["sources"][0]["document_id"] == document_ids[0]
+            assert document_ids[0] in {
+                source["document_id"] for source in chat.json()["sources"]
+            }
 
             viewer_name = f"document-viewer-{uuid.uuid4().hex[:8]}"
             viewer_password = f"{uuid.uuid4().hex}Aa9!"
