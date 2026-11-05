@@ -255,14 +255,17 @@ def main() -> None:
             st.session_state.pop("api_user", None)
             st.rerun()
         st.markdown("---")
+        navigation = [
+            "✳  AI Chat & Analisis",
+            "▤  Input & Knowledge Base",
+            "⌘  Aturan & Audit",
+            "◉  Audit & Status Sistem",
+        ]
+        if user["role"] in ("admin", "analyst"):
+            navigation.insert(1, "⌕  Dokumen & Pencarian")
         section = st.radio(
             "NAVIGASI",
-            [
-                "✳  AI Chat & Analisis",
-                "▤  Input & Knowledge Base",
-                "⌘  Aturan & Audit",
-                "◉  Audit & Status Sistem",
-            ],
+            navigation,
             label_visibility="visible",
         )
         st.markdown("---")
@@ -423,6 +426,125 @@ def main() -> None:
                         st.rerun()
                     except ApiError as exc:
                         show_error(exc)
+
+    elif section.startswith("⌕"):
+        st.subheader("Basis pengetahuan dokumen lokal")
+        st.warning(
+            "Dokumen dan pencarian berisi data sensitif disimpan di PostgreSQL server lokal. "
+            "Hanya admin/analyst yang dapat mengunggah dan mencari; gunakan hanya data "
+            "yang Anda berwenang proses."
+        )
+        upload_col, search_col = st.columns([1, 1.15], gap="large")
+        with upload_col:
+            st.markdown("#### Tambahkan dokumen")
+            if user["role"] not in ("admin", "analyst"):
+                st.info("Peran viewer tidak dapat mengunggah atau mencari dokumen.")
+            else:
+                document = st.file_uploader(
+                    "PDF, TXT, DOC/DOCX, ODT, RTF, HTML, atau Markdown",
+                    type=["pdf", "txt", "doc", "docx", "odt", "rtf", "html", "htm", "md"],
+                    help=(
+                        "PDF hasil pindai diproses dengan OCR Indonesia/Inggris. "
+                        "Batas upload mengikuti MAX_UPLOAD_MB."
+                    ),
+                    key="document_upload",
+                )
+                if document and st.button("Ekstrak & indeks dokumen", type="primary"):
+                    try:
+                        result = api_request(
+                            "POST",
+                            "/documents",
+                            files={
+                                "file": (
+                                    document.name,
+                                    document.getvalue(),
+                                    document.type or "application/octet-stream",
+                                )
+                            },
+                        )
+                        if result["status"] == "already_indexed":
+                            st.info("Dokumen yang sama sudah pernah diindeks.")
+                        else:
+                            st.success(
+                                f"Dokumen diindeks: {result['chunks']} bagian, "
+                                f"{result['characters']:,} karakter."
+                            )
+                        if result["ocr_pages"]:
+                            st.caption(
+                                f"OCR digunakan pada {result['ocr_pages']} halaman pindai."
+                            )
+                        st.rerun()
+                    except ApiError as exc:
+                        show_error(exc)
+
+            st.markdown("#### Dokumen terindeks")
+            try:
+                documents = api_request("GET", "/documents")
+                if documents:
+                    st.dataframe(
+                        pd.DataFrame(documents)[
+                            ["file_name", "file_type", "page_count", "chunk_count", "created_at"]
+                        ].rename(
+                            columns={
+                                "file_name": "Nama file",
+                                "file_type": "Format",
+                                "page_count": "Halaman",
+                                "chunk_count": "Bagian indeks",
+                                "created_at": "Diunggah",
+                            }
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.info("Belum ada dokumen. Unggah dokumen untuk mulai mencari.")
+            except ApiError as exc:
+                show_error(exc)
+
+        with search_col:
+            st.markdown("#### Cari dan analisis")
+            with st.form("document_search_form"):
+                search_query = st.text_input(
+                    "NIK atau nama / pertanyaan",
+                    max_chars=256,
+                    placeholder="Masukkan NIK lengkap atau nama yang ingin dicari",
+                )
+                ask_ai = st.checkbox(
+                    "Buat analisis AI lokal berdasarkan kutipan", value=True
+                )
+                search_submitted = st.form_submit_button(
+                    "Cari di dokumen lokal", type="primary", disabled=not health_ollama and ask_ai
+                )
+            if search_submitted and search_query.strip():
+                try:
+                    result = api_request(
+                        "POST",
+                        "/documents/search",
+                        data={"query": search_query.strip(), "ask_ai": ask_ai},
+                    )
+                    st.session_state["document_search_result"] = result
+                except ApiError as exc:
+                    show_error(exc)
+
+            result = st.session_state.get("document_search_result")
+            if result:
+                if result["answer"]:
+                    st.markdown("**Analisis AI lokal**")
+                    st.markdown(result["answer"])
+                    st.caption(result["notice"])
+                st.markdown(f"**{result['result_count']} kutipan ditemukan**")
+                for index, match in enumerate(result["matches"], start=1):
+                    page = (
+                        f" · halaman {match['page_number']}"
+                        if match["page_number"]
+                        else ""
+                    )
+                    with st.expander(
+                        f"[{index}] {match['file_name']}{page} · bagian {match['chunk_index'] + 1}"
+                    ):
+                        st.text(match["excerpt"])
+            if result and not result["matches"]:
+                st.info("Tidak ditemukan kecocokan dalam dokumen yang terindeks.")
 
     elif section.startswith("▤"):
         source_col, import_col = st.columns([1.15, 1])

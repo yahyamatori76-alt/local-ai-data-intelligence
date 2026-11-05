@@ -69,9 +69,11 @@ Volume `postgres_data` dan `ollama_data` tetap dipertahankan. Jangan gunakan `do
 
 1. Masuk ke `http://192.168.1.89:8501` menggunakan akun admin dari `.env`.
 2. Pada **Input & Knowledge Base**, pilih sumber terotorisasi dan unggah file CSV/XLSX/JSON. System log menerima JSON Lines (`.log`). Data uji tersedia di `data/synthetic/`.
-3. Jalankan `TX_EVENT_300S` dari halaman **AI Chat & Analisis** setelah file transaksi dan event diimpor.
-4. Tinjau atau tolak korelasi yang belum direview; aktivitas tersimpan di audit.
-5. Chat mengirim pertanyaan dan ringkasan agregat terverifikasi saja ke Ollama lokal. Jangan masukkan data pribadi ke prompt.
+3. Pada **Dokumen & Pencarian**, unggah PDF, TXT, DOC/DOCX, ODT, RTF, HTML, atau Markdown. PDF hasil pindai diproses dengan OCR Tesseract bahasa Indonesia/Inggris. Dokumen dipecah menjadi bagian dan indeks teksnya disimpan di PostgreSQL lokal; file asli tidak disimpan.
+4. Cari NIK 16 digit secara tepat atau nama/teks secara penuh/parsial. Hanya kutipan yang ditemukan di dokumen lokal yang dikirim ke Ollama lokal untuk diringkas, dengan nama file/halaman sebagai sumber. Dokumen tidak dikirim ke layanan cloud.
+5. Jalankan `TX_EVENT_300S` dari halaman **AI Chat & Analisis** setelah file transaksi dan event diimpor.
+6. Tinjau atau tolak korelasi yang belum direview; aktivitas tersimpan di audit.
+7. Chat ringkasan dashboard tetap hanya menggunakan agregat terverifikasi. Analisis dokumen menggunakan halaman terpisah **Dokumen & Pencarian**.
 
 Format impor minimum:
 
@@ -82,6 +84,8 @@ Format impor minimum:
 Timestamp tanpa zona waktu dianggap UTC. Duplikat referensi dalam satu file ditolak per baris; alasan penolakan disimpan tanpa isi sensitif baris. Batas default upload 100 MB.
 
 Admin dapat membuat akun `analyst`/`viewer` melalui endpoint `POST /auth/users` dengan HTTP Basic. Endpoint operasional mewajibkan autentikasi; peran admin mengelola sumber dan user, analyst/admin dapat impor, korelasi dan review, sedangkan viewer hanya membaca.
+
+Unggah dokumen dan pencarian dokumen dibatasi untuk admin/analyst. Teks dokumen yang diekstrak berisi data sensitif dan disimpan pada tabel `local_documents` serta `local_document_chunks` di PostgreSQL. Aktivitas audit menyimpan jenis dan panjang kueri serta jumlah hasil, bukan nilai NIK/nama yang dicari. Pastikan pengguna memiliki dasar/otorisasi pemrosesan; batasi akses jaringan dan lindungi backup database. OCR dibatasi maksimal 20 halaman pindai per dokumen.
 
 Jalankan acceptance/unit tests di server:
 

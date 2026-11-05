@@ -46,6 +46,9 @@ milestone.
     independently asserting identity matches.
 8.  Keep a traceable record of important user actions and analysis
     operations.
+9.  Index authorized local PDF and office documents for exact identifier
+    and text search, and let the local LLM summarize only retrieved
+    source excerpts with document citations.
 
 ## 3. Out of Scope for the MVP
 

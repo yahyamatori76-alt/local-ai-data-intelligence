@@ -1,4 +1,5 @@
 import os
+import uuid
 
 from fastapi.testclient import TestClient
 
@@ -42,3 +43,101 @@ def test_admin_can_authenticate_and_read_sources():
             "/analysis/results?review_status=unreviewed",
             auth=(username, password),
         ).status_code == 200
+
+
+def test_local_documents_are_indexed_and_searchable_with_exact_nik():
+    from sqlalchemy import text
+
+    from app.db.repositories import get_engine
+
+    username = os.environ["APP_ADMIN_USERNAME"]
+    password = os.environ["APP_ADMIN_PASSWORD"]
+    admin = (username, password)
+    nik = f"{uuid.uuid4().int % 10**16:016d}"
+    padded_nik = f"9{nik}"
+    document_ids = []
+    viewer_name = None
+    try:
+        with TestClient(app) as client:
+            exact = client.post(
+                "/documents",
+                auth=admin,
+                files={
+                    "file": (
+                        f"identity-{uuid.uuid4().hex}.txt",
+                        f"Nama: Siti Contoh\nNIK: {nik}\n".encode(),
+                        "text/plain",
+                    )
+                },
+            )
+            assert exact.status_code == 201, exact.text
+            document_ids.append(exact.json()["document_id"])
+
+            near = client.post(
+                "/documents",
+                auth=admin,
+                files={
+                    "file": (
+                        f"near-{uuid.uuid4().hex}.txt",
+                        f"Catatan: NIK {padded_nik}\n".encode(),
+                        "text/plain",
+                    )
+                },
+            )
+            assert near.status_code == 201, near.text
+            document_ids.append(near.json()["document_id"])
+
+            search = client.post(
+                "/documents/search",
+                auth=admin,
+                json={"query": nik, "ask_ai": False},
+            )
+            assert search.status_code == 200, search.text
+            assert search.json()["query_type"] == "nik"
+            assert search.json()["result_count"] == 1
+            assert search.json()["matches"][0]["document_id"] == document_ids[0]
+
+            viewer_name = f"document-viewer-{uuid.uuid4().hex[:8]}"
+            viewer_password = f"{uuid.uuid4().hex}Aa9!"
+            viewer = client.post(
+                "/auth/users",
+                auth=admin,
+                json={
+                    "username": viewer_name,
+                    "password": viewer_password,
+                    "role": "viewer",
+                },
+            )
+            assert viewer.status_code == 201, viewer.text
+            viewer_credentials = (viewer_name, viewer_password)
+            assert client.post(
+                "/documents/search",
+                auth=viewer_credentials,
+                json={"query": nik, "ask_ai": False},
+            ).status_code == 403
+    finally:
+        if document_ids or viewer_name:
+            with get_engine().begin() as connection:
+                if document_ids:
+                    connection.execute(
+                        text(
+                            "DELETE FROM local_documents WHERE id::text = ANY(:ids)"
+                        ),
+                        {"ids": document_ids},
+                    )
+                if viewer_name:
+                    connection.execute(
+                        text(
+                            """
+                            DELETE FROM analysis_audit
+                            WHERE user_id = (
+                                SELECT id FROM app_users WHERE username = :username
+                            )
+                            """
+                        ),
+                        {"username": viewer_name},
+                    )
+                    connection.execute(
+                        text("DELETE FROM app_users WHERE username = :username"),
+                        {"username": viewer_name},
+                    )

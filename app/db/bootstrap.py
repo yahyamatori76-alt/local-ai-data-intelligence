@@ -9,12 +9,17 @@ from sqlalchemy.engine import Engine
 
 
 def initialize_database(engine: Engine) -> None:
-    migration_path = Path(__file__).resolve().parents[2] / "migrations" / "002_operational_workflows.sql"
-    migration = migration_path.read_text(encoding="utf-8")
+    migration_directory = Path(__file__).resolve().parents[2] / "migrations"
+    migration_paths = (
+        migration_directory / "002_operational_workflows.sql",
+        migration_directory / "003_local_documents.sql",
+    )
     with engine.begin() as connection:
-        for statement in migration.split(";"):
-            if statement.strip():
-                connection.exec_driver_sql(statement)
+        for migration_path in migration_paths:
+            migration = migration_path.read_text(encoding="utf-8")
+            for statement in migration.split(";"):
+                if statement.strip():
+                    connection.exec_driver_sql(statement)
 
         admin_username = os.environ.get("APP_ADMIN_USERNAME", "").strip()
         admin_password = os.environ.get("APP_ADMIN_PASSWORD", "")
