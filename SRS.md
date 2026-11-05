@@ -190,6 +190,9 @@ Streamlit Dashboard
 -   The application must not infer that two records represent the same
     person merely because names, locations, amounts, or timestamps are
     similar.
+-   The dashboard must call authenticated FastAPI endpoints rather than
+    connecting directly to PostgreSQL.
+-   PostgreSQL credentials are available only to backend containers.
 
 ## 8. Functional Requirements
 
@@ -335,7 +338,9 @@ committed to source control. - Recovery steps are documented.
 
 Use PostgreSQL database `local_ai_intel`.
 
-Create a versioned migration at `migrations/001_initial_schema.sql`.
+Create versioned migrations starting with `migrations/001_initial_schema.sql`.
+Operational additions use `migrations/002_operational_workflows.sql`; the API
+applies that idempotent migration at startup.
 
 ``` sql
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -634,6 +639,12 @@ Implement these endpoints:
   GET                     `/sources`                               List permitted data
                                                                    sources
 
+  POST                    `/sources`                               Register a source
+
+  GET                     `/auth/me`                               Validate local user
+
+  POST                    `/auth/users`                            Create an RBAC user
+
   POST                    `/imports`                               Import an authorized
                                                                    dataset
 
@@ -645,17 +656,29 @@ Implement these endpoints:
   POST                    `/analysis/correlate`                    Run a named, approved
                                                                    correlation rule
 
+  GET                     `/analysis/rules`                        List correlation rules
+
   GET                     `/analysis/results`                      List permitted results
 
   POST                    `/analysis/results/{result_id}/review`   Review a result
 
   POST                    `/chat`                                  Ask the local AI about
                                                                    permitted information
+
+  GET                     `/dashboard/summary`                     Read dashboard aggregates
+
+  GET                     `/audit`                                 Read admin audit trail
   ----------------------------------------------------------------------------------------
 
 All endpoints except a deliberately limited local health check must
 enforce appropriate authentication and authorization before operational
 use.
+
+The local dashboard authenticates users using HTTP Basic credentials
+validated against bcrypt password hashes. An admin account is bootstrapped
+from `APP_ADMIN_USERNAME` and `APP_ADMIN_PASSWORD`; the default role
+permissions follow FR-009. The dashboard routes all data through the API
+and does not receive database credentials.
 
 ## 16. Initial Correlation Rule
 

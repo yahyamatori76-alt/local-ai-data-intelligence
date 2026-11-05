@@ -12,5 +12,6 @@ RUN python -m pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY dashboard ./dashboard
+COPY migrations ./migrations
 
 EXPOSE 8000 8501

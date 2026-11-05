@@ -1,40 +1,34 @@
-"""FastAPI health endpoints for the Dockerized MVP."""
+"""FastAPI application entry point."""
 
-from functools import lru_cache
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
-from sqlalchemy import text
-from sqlalchemy.engine import Engine
-from sqlalchemy.exc import SQLAlchemyError
+from fastapi import FastAPI
 
-from app.db.connection import create_database_engine
+from app.api.routes_analysis import router as analysis_router
+from app.api.routes_chat import router as chat_router
+from app.api.routes_health import router as health_router
+from app.api.routes_import import router as import_router
+from app.api.routes_dashboard import router as dashboard_router
+from app.db.bootstrap import initialize_database
+from app.db.repositories import get_engine
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize_database(get_engine())
+    yield
+
 
 app = FastAPI(
     title="Local AI Data Intelligence Platform",
-    version="0.1.0",
-    docs_url=None,
+    version="0.2.0",
+    docs_url="/api/docs",
     redoc_url=None,
+    lifespan=lifespan,
 )
 
-
-@lru_cache
-def get_engine() -> Engine:
-    return create_database_engine()
-
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.get("/health/db")
-def database_health() -> dict[str, str]:
-    try:
-        with get_engine().connect() as connection:
-            connection.execute(text("SELECT 1"))
-    except (ValueError, SQLAlchemyError) as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="PostgreSQL is unavailable or not configured.",
-        ) from exc
-    return {"status": "ok", "database": "postgresql"}
+app.include_router(health_router)
+app.include_router(import_router)
+app.include_router(analysis_router)
+app.include_router(chat_router)
+app.include_router(dashboard_router)

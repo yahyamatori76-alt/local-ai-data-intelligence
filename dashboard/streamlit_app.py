@@ -1,4 +1,4 @@
-"""Streamlit dashboard for the local data intelligence platform."""
+"""Authenticated Streamlit dashboard backed by FastAPI and PostgreSQL."""
 
 from __future__ import annotations
 
@@ -10,18 +10,11 @@ import httpx
 import pandas as pd
 import streamlit as st
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import text
-from sqlalchemy.engine import Engine
-from sqlalchemy.exc import SQLAlchemyError
-
-from app.db.connection import create_database_engine
 
 LOGGER = logging.getLogger(__name__)
 
 
 class DashboardSettings(BaseSettings):
-    """Dashboard configuration loaded from the environment or project .env."""
-
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_base_url: str = "http://127.0.0.1:8000"
@@ -29,123 +22,63 @@ class DashboardSettings(BaseSettings):
     ollama_model: str = "llama3.2:3b"
 
 
-@st.cache_resource
-def get_engine() -> Engine:
-    """Create one reusable PostgreSQL engine for this Streamlit process."""
-    return create_database_engine()
+class ApiError(Exception):
+    def __init__(self, status_code: int, detail: str):
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(detail)
 
 
-def load_dashboard_data(engine: Engine) -> dict[str, Any]:
-    """Load bounded dashboard aggregates and recent metadata from PostgreSQL."""
-    statements = {
-        "sources": text(
-            "SELECT count(*) FROM source_registry WHERE enabled = TRUE"
-        ),
-        "batches_total": text("SELECT count(*) FROM import_batches"),
-        "batches_completed": text(
-            "SELECT count(*) FROM import_batches WHERE status = 'completed'"
-        ),
-        "records_loaded": text(
-            "SELECT coalesce(sum(records_loaded), 0) FROM import_batches"
-        ),
-        "results_total": text("SELECT count(*) FROM correlation_results"),
-        "results_unreviewed": text(
-            "SELECT count(*) FROM correlation_results "
-            "WHERE review_status = 'unreviewed'"
-        ),
-        "batches": text(
-            """
-            SELECT b.id::text AS batch_id, s.source_name, b.status,
-                   b.records_loaded, b.records_rejected, b.created_at
-            FROM import_batches AS b
-            JOIN source_registry AS s ON s.id = b.source_id
-            ORDER BY b.created_at DESC
-            LIMIT 6
-            """
-        ),
-        "source_list": text(
-            """
-            SELECT source_code, source_name, source_type, enabled, authorized_purpose
-            FROM source_registry
-            ORDER BY source_name
-            LIMIT 30
-            """
-        ),
-        "rules": text(
-            """
-            SELECT rule_code, rule_name, rule_version, enabled
-            FROM correlation_rules
-            ORDER BY rule_code
-            LIMIT 8
-            """
-        ),
-        "audit": text(
-            """
-            SELECT action, source_code, outcome, created_at
-            FROM analysis_audit
-            ORDER BY created_at DESC
-            LIMIT 20
-            """
-        ),
-        "results": text(
-            """
-            SELECT left_source, left_record_ref, right_source, right_record_ref,
-                   match_method, review_status, created_at
-            FROM correlation_results
-            ORDER BY created_at DESC
-            LIMIT 8
-            """
-        ),
-    }
-
-    with engine.connect() as connection:
-        return {
-            "sources": connection.execute(statements["sources"]).scalar_one(),
-            "batches_total": connection.execute(
-                statements["batches_total"]
-            ).scalar_one(),
-            "batches_completed": connection.execute(
-                statements["batches_completed"]
-            ).scalar_one(),
-            "records_loaded": connection.execute(
-                statements["records_loaded"]
-            ).scalar_one(),
-            "results_total": connection.execute(
-                statements["results_total"]
-            ).scalar_one(),
-            "results_unreviewed": connection.execute(
-                statements["results_unreviewed"]
-            ).scalar_one(),
-            "batches": pd.read_sql(statements["batches"], connection),
-            "source_list": pd.read_sql(statements["source_list"], connection),
-            "rules": pd.read_sql(statements["rules"], connection),
-            "audit": pd.read_sql(statements["audit"], connection),
-            "results": pd.read_sql(statements["results"], connection),
-        }
-
-
-def check_service(url: str, path: str = "/health") -> bool:
-    """Return whether a local HTTP service responds successfully."""
+def api_request(
+    method: str,
+    path: str,
+    *,
+    data: dict[str, Any] | None = None,
+    files: dict[str, Any] | None = None,
+) -> Any:
+    credentials = st.session_state.get("api_credentials")
+    if credentials is None:
+        raise ApiError(401, "Silakan masuk terlebih dahulu.")
     try:
-        response = httpx.get(f"{url.rstrip('/')}{path}", timeout=1.5)
-        return response.is_success
+        response = httpx.request(
+            method,
+            f"{DashboardSettings().app_base_url.rstrip('/')}{path}",
+            auth=credentials,
+            json=data if files is None else None,
+            data=data if files is not None else None,
+            files=files,
+            timeout=130,
+        )
+    except httpx.HTTPError as exc:
+        LOGGER.error("Dashboard API request failed (%s)", type(exc).__name__)
+        raise ApiError(503, "API belum dapat dihubungi.") from exc
+
+    if not response.is_success:
+        try:
+            body = response.json()
+            detail = body.get("detail", "Permintaan tidak berhasil.")
+            if isinstance(detail, dict):
+                detail = detail.get("error", str(detail))
+        except ValueError:
+            detail = "Permintaan tidak berhasil."
+        raise ApiError(response.status_code, str(detail))
+    if response.status_code == 204 or not response.content:
+        return None
+    return response.json()
+
+
+def service_status(url: str) -> bool:
+    try:
+        return httpx.get(url, timeout=2).is_success
     except httpx.HTTPError:
         return False
 
 
-def filter_by_time(frame: pd.DataFrame, column: str, time_range: str) -> pd.DataFrame:
-    """Filter a bounded result set by its timestamp column."""
-    days_by_range = {"24 jam": 1, "7 hari": 7, "30 hari": 30}
-    days = days_by_range.get(time_range)
-    if days is None or frame.empty:
-        return frame
-
-    timestamps = pd.to_datetime(frame[column], utc=True, errors="coerce")
-    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
-    return frame.loc[timestamps >= cutoff]
+def show_error(error: ApiError) -> None:
+    st.error(f"{error.detail} (HTTP {error.status_code})")
 
 
-def metric(label: str, value: str, note: str, accent: str = "green") -> None:
+def metric(label: str, value: str, note: str, accent: str) -> None:
     st.markdown(
         f"""
         <div class="metric-card">
@@ -156,6 +89,34 @@ def metric(label: str, value: str, note: str, accent: str = "green") -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def show_login(settings: DashboardSettings) -> bool:
+    st.markdown("## ✳ Local Intelligence")
+    st.caption("Masuk dengan akun lokal yang dibuat administrator.")
+    with st.form("login_form"):
+        username = st.text_input("Nama pengguna")
+        password = st.text_input("Kata sandi", type="password")
+        submitted = st.form_submit_button("Masuk", type="primary")
+    if submitted:
+        try:
+            response = httpx.get(
+                f"{settings.app_base_url.rstrip('/')}/auth/me",
+                auth=(username, password),
+                timeout=5,
+            )
+            if response.is_success:
+                st.session_state["api_credentials"] = (username, password)
+                st.session_state["api_user"] = response.json()
+                st.rerun()
+            elif response.status_code == 401:
+                st.error("Nama pengguna atau kata sandi tidak valid.")
+            else:
+                st.error(f"API mengembalikan HTTP {response.status_code}.")
+        except httpx.HTTPError as exc:
+            LOGGER.error("Dashboard login check failed (%s)", type(exc).__name__)
+            st.error("API belum dapat dihubungi.")
+    return False
 
 
 def main() -> None:
@@ -171,386 +132,411 @@ def main() -> None:
         <style>
         :root {
           color-scheme: dark;
-          --bg: #080f1c;
-          --panel: #0e1929;
-          --panel-2: #111f31;
-          --border: #20334a;
-          --text: #e4edf7;
-          --muted: #8296ad;
-          --green: #27e0ae;
-          --blue: #66b9ff;
-          --amber: #eebf62;
+          --bg:#080f1c;--panel:#0e1929;--panel2:#111f31;
+          --border:#20334a;--text:#e4edf7;--muted:#8296ad;
+          --green:#27e0ae;--blue:#66b9ff;--amber:#eebf62;
         }
-        .stApp { background: var(--bg); color: var(--text); }
-        [data-testid="stHeader"] { background: rgba(8,15,28,.92); }
-        [data-testid="stSidebar"] {
-          background: #0d1727;
-          border-right: 1px solid var(--border);
+        .stApp{background:var(--bg);color:var(--text)}
+        [data-testid="stHeader"]{background:rgba(8,15,28,.92)}
+        [data-testid="stSidebar"]{background:#0d1727;border-right:1px solid var(--border)}
+        .block-container{max-width:1800px;padding:1rem 1.4rem 2rem}
+        h1,h2,h3{color:var(--text)!important;letter-spacing:-.02em}
+        h1{font-size:1.3rem!important}h2{font-size:1.05rem!important}
+        .brand{font-size:1.08rem;line-height:1.05;font-weight:750;color:#f0f7ff}
+        .brand span,.green{color:var(--green)}
+        .muted,.metric-label,.metric-note{color:var(--muted)!important}
+        .topbar,.metric-card,.chat-card,.rule-card{
+          background:var(--panel);border:1px solid var(--border);border-radius:10px
         }
-        [data-testid="stSidebar"] > div { padding-top: 1rem; }
-        .block-container { max-width: 1800px; padding: 1rem 1.4rem 2rem; }
-        h1, h2, h3 { color: var(--text) !important; letter-spacing: -.025em; }
-        h1 { font-size: 1.32rem !important; }
-        h2 { font-size: 1.05rem !important; }
-        h3 { font-size: .91rem !important; }
-        p, label, [data-testid="stMarkdownContainer"] { color: var(--text); }
-        .brand { font-size: 1.08rem; line-height: 1.05; font-weight: 750; color: #f0f7ff; }
-        .brand span { color: var(--green); }
-        .eyebrow, .muted { color: var(--muted) !important; font-size: .75rem; }
-        .topbar, .panel, .metric-card, .chat-card, .rule-card {
-          background: var(--panel);
-          border: 1px solid var(--border);
-          border-radius: 10px;
-        }
-        .topbar {
-          display:flex; align-items:center; justify-content:space-between;
-          gap:1rem; padding:.7rem 1rem; margin:.1rem 0 1rem;
-        }
-        .topbar-title { font-weight:700; font-size:.94rem; }
-        .topbar-meta { color:var(--muted); font-size:.72rem; margin-top:.16rem; }
-        .pill {
-          display:inline-flex; align-items:center; gap:.35rem; padding:.28rem .55rem;
-          border:1px solid var(--border); border-radius:999px; font-size:.7rem;
-          color:#b8c9dc; white-space:nowrap; margin-left:.25rem;
-        }
-        .dot { width:7px; height:7px; border-radius:50%; display:inline-block; background:var(--green); }
-        .dot.off { background:#77869a; }
-        .panel { padding:.9rem 1rem; margin-bottom:.8rem; }
-        .panel-title { display:flex; justify-content:space-between; gap:.6rem; align-items:center; margin-bottom:.65rem; }
-        .panel-title strong { font-size:.9rem; }
-        .metric-card { padding:.8rem .85rem; min-height:104px; }
-        .metric-label { font-size:.72rem; color:var(--muted); }
-        .metric-value { font-size:1.55rem; font-weight:750; margin:.18rem 0; }
-        .metric-value.green { color:var(--green); }
-        .metric-value.blue { color:var(--blue); }
-        .metric-value.amber { color:var(--amber); }
-        .metric-note { color:var(--muted); font-size:.68rem; }
-        .chat-card { background:var(--panel-2); padding:.85rem; margin:.55rem 0; }
-        .chat-role { color:var(--green); font-size:.68rem; font-weight:700; margin-bottom:.3rem; }
-        .chat-copy { color:#cad7e5; font-size:.78rem; line-height:1.55; }
-        .rule-card { padding:.7rem .8rem; margin:.45rem 0; }
-        .rule-code { color:var(--blue); font-size:.7rem; font-weight:700; }
-        .rule-name { font-size:.78rem; margin:.22rem 0; }
-        .rule-note { color:var(--muted); font-size:.68rem; }
-        div[data-testid="stDataFrame"] { border:1px solid var(--border); border-radius:8px; overflow:hidden; }
-        div[data-testid="stFileUploader"] { background:var(--panel-2); border:1px dashed #2b4560; border-radius:8px; }
-        .stButton button, .stDownloadButton button { border-radius:7px; }
-        .stButton button[kind="primary"] { background:#087e67; border-color:#10bd96; }
-        hr { border-color:var(--border); }
-        @media (max-width: 800px) {
-          .block-container { padding: .8rem .8rem 2rem; }
-          .topbar { align-items:flex-start; flex-direction:column; }
-        }
+        .topbar{display:flex;justify-content:space-between;align-items:center;
+          gap:1rem;padding:.7rem 1rem;margin:.1rem 0 1rem}
+        .topbar-title{font-weight:700;font-size:.94rem}
+        .metric-card{padding:.8rem .85rem;min-height:100px}
+        .metric-label,.metric-note{font-size:.72rem}
+        .metric-value{font-size:1.5rem;font-weight:750;margin:.2rem 0}
+        .metric-value.green{color:var(--green)}.metric-value.blue{color:var(--blue)}
+        .metric-value.amber{color:var(--amber)}
+        .chat-card,.rule-card{background:var(--panel2);padding:.8rem;margin:.5rem 0}
+        .chat-role,.rule-code{color:var(--green);font-size:.72rem;font-weight:700}
+        .stButton button,.stFormSubmitButton button{border-radius:7px}
+        div[data-testid="stDataFrame"]{border:1px solid var(--border);border-radius:8px}
+        @media(max-width:800px){.block-container{padding:.8rem}}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    app_online = check_service(settings.app_base_url)
-    ollama_online = check_service(settings.ollama_base_url, "/api/tags")
-    db_data: dict[str, Any] | None = None
-    db_error = ""
+    if "api_credentials" not in st.session_state:
+        show_login(settings)
+        return
+
     try:
-        db_data = load_dashboard_data(get_engine())
-    except (SQLAlchemyError, ValueError) as exc:
-        LOGGER.error("Dashboard PostgreSQL query failed (%s)", type(exc).__name__)
-        db_error = (
-            "PostgreSQL belum dapat diakses atau migrasi SRS belum diterapkan. "
-            "Periksa layanan database dan konfigurasi POSTGRES_*."
-        )
+        user = api_request("GET", "/auth/me")
+    except ApiError:
+        st.session_state.pop("api_credentials", None)
+        st.session_state.pop("api_user", None)
+        show_login(settings)
+        return
+    st.session_state["api_user"] = user
+
+    health_api = service_status(f"{settings.app_base_url.rstrip('/')}/health")
+    health_db = service_status(f"{settings.app_base_url.rstrip('/')}/health/db")
+    health_ollama = service_status(f"{settings.app_base_url.rstrip('/')}/health/ollama")
 
     with st.sidebar:
         st.markdown(
             '<div class="brand"><span>✳</span> Local<br>Intelligence</div>',
             unsafe_allow_html=True,
         )
-        st.caption("PLATFORM ANALISIS LOKAL")
+        st.caption(f"{user['username']} · {user['role']}")
+        if st.button("Keluar", use_container_width=True):
+            st.session_state.pop("api_credentials", None)
+            st.session_state.pop("api_user", None)
+            st.rerun()
         st.markdown("---")
         section = st.radio(
             "NAVIGASI",
-            ["✳  AI Chat & Analisis", "▤  Input & Knowledge Base", "⌘  Aturan & Audit", "◉  Audit & Status Sistem"],
+            [
+                "✳  AI Chat & Analisis",
+                "▤  Input & Knowledge Base",
+                "⌘  Aturan & Audit",
+                "◉  Audit & Status Sistem",
+            ],
             label_visibility="visible",
         )
         st.markdown("---")
-        st.markdown("**FILTER ANALISIS**")
-        time_range = st.selectbox("Rentang waktu", ["Semua waktu", "24 jam", "7 hari", "30 hari"])
-        review_filter = st.selectbox(
-            "Status review", ["Semua status", "Belum direview", "Dikonfirmasi", "Ditolak"]
-        )
-        st.markdown("---")
         st.markdown("**STATUS NODE**")
-        st.markdown(
-            f'<div class="muted">PostgreSQL &nbsp; <span style="color:{"#27e0ae" if db_data else "#eebf62"}">{"TERHUBUNG" if db_data else "BELUM TERHUBUNG"}</span></div>'
-            f'<div class="muted">FastAPI &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span style="color:{"#27e0ae" if app_online else "#eebf62"}">{"ONLINE" if app_online else "OFFLINE"}</span></div>'
-            f'<div class="muted">Ollama &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span style="color:{"#27e0ae" if ollama_online else "#eebf62"}">{"ONLINE" if ollama_online else "OFFLINE"}</span></div>',
-            unsafe_allow_html=True,
-        )
-        st.caption(f"Model lokal: {settings.ollama_model}")
-        st.caption("Mode lokal · data tidak dikirim ke cloud")
+        st.caption(f"PostgreSQL: {'TERHUBUNG' if health_db else 'OFFLINE'}")
+        st.caption(f"FastAPI: {'ONLINE' if health_api else 'OFFLINE'}")
+        st.caption(f"Ollama: {'ONLINE' if health_ollama else 'OFFLINE'}")
+        st.caption(f"Model: {settings.ollama_model}")
+
+    try:
+        summary = api_request("GET", "/dashboard/summary")
+        sources = api_request("GET", "/sources")
+        batches = api_request("GET", "/imports?limit=50")
+        results = api_request("GET", "/analysis/results?limit=100")
+        rules = api_request("GET", "/analysis/rules")
+    except ApiError as exc:
+        show_error(exc)
+        st.stop()
 
     st.markdown(
         f"""
         <div class="topbar">
-          <div>
-            <div class="topbar-title">{section.split('  ', 1)[-1]}</div>
-            <div class="topbar-meta">Workspace analisis lokal &nbsp;·&nbsp; {time_range}</div>
-          </div>
-          <div>
-            <span class="pill"><i class="dot {' ' if db_data else 'off'}"></i> PostgreSQL</span>
-            <span class="pill"><i class="dot {' ' if app_online else 'off'}"></i> API</span>
-            <span class="pill"><i class="dot {' ' if ollama_online else 'off'}"></i> Ollama</span>
-          </div>
+          <div><div class="topbar-title">{escape(section.split('  ',1)[-1])}</div>
+          <div class="muted">Data dan ringkasan diambil melalui API dengan otorisasi</div></div>
+          <div class="muted">PostgreSQL · FastAPI · Ollama lokal</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-    if db_error:
-        st.warning(db_error)
-
-    if db_data is None:
-        sources = batches_total = batches_completed = records_loaded = 0
-        results_total = results_unreviewed = 0
-        batches = pd.DataFrame(
-            columns=["batch_id", "source_name", "status", "records_loaded", "records_rejected", "created_at"]
+    metric_cols = st.columns(3)
+    with metric_cols[0]:
+        metric("SUMBER AKTIF", str(summary["sources"]), "Sumber terotorisasi", "green")
+    with metric_cols[1]:
+        metric(
+            "BATCH SELESAI",
+            str(summary["batches_completed"]),
+            f"Dari {summary['batches_total']} batch",
+            "blue",
         )
-        rules = pd.DataFrame(columns=["rule_code", "rule_name", "rule_version", "enabled"])
-        source_list = pd.DataFrame(
-            columns=["source_code", "source_name", "source_type", "enabled", "authorized_purpose"]
+    with metric_cols[2]:
+        metric(
+            "HASIL KORELASI",
+            str(summary["results_total"]),
+            f"{summary['results_unreviewed']} belum direview",
+            "amber",
         )
-        audit = pd.DataFrame(columns=["action", "source_code", "outcome", "created_at"])
-        results = pd.DataFrame(
-            columns=["left_source", "left_record_ref", "right_source", "right_record_ref", "match_method", "review_status", "created_at"]
-        )
-    else:
-        sources = db_data["sources"]
-        batches_total = db_data["batches_total"]
-        batches_completed = db_data["batches_completed"]
-        records_loaded = db_data["records_loaded"]
-        results_total = db_data["results_total"]
-        results_unreviewed = db_data["results_unreviewed"]
-        batches = db_data["batches"]
-        source_list = db_data["source_list"]
-        rules = db_data["rules"]
-        audit = db_data["audit"]
-        results = db_data["results"]
 
-    if section.startswith("▤"):
-        source_col, import_col = st.columns([1.2, 1], gap="medium")
-        with source_col:
-            st.subheader("Sumber data terdaftar")
-            if source_list.empty:
-                st.info("Belum ada sumber data di PostgreSQL.")
+    if section.startswith("✳"):
+        left, right = st.columns([1.5, 1])
+        with left:
+            st.subheader("Asisten Intelijen Lokal")
+            st.warning(
+                "AI hanya menjelaskan ringkasan agregat terverifikasi. "
+                "Jangan masukkan data pribadi; hasil harus divalidasi analis."
+            )
+            with st.form("chat_form", clear_on_submit=True):
+                question = st.text_area(
+                    "Pertanyaan",
+                    placeholder="Contoh: Ringkas jumlah batch dan korelasi yang belum ditinjau.",
+                    max_chars=2000,
+                )
+                submitted = st.form_submit_button(
+                    "Kirim pertanyaan", type="primary", disabled=not health_ollama
+                )
+            if submitted and question.strip():
+                try:
+                    answer = api_request(
+                        "POST", "/chat", data={"question": question.strip()}
+                    )
+                    st.markdown(
+                        f'<div class="chat-card"><div class="chat-role">ASISTEN · {escape(answer["model"])}</div>'
+                        f'<div>{escape(answer["answer"])}</div><br><span class="muted">{escape(answer["limitations"])}</span></div>',
+                        unsafe_allow_html=True,
+                    )
+                except ApiError as exc:
+                    show_error(exc)
+
+            st.subheader("Hasil korelasi")
+            if results:
+                table = pd.DataFrame(results)
+                table = table[
+                    [
+                        "result_id",
+                        "left_source",
+                        "left_record_ref",
+                        "right_source",
+                        "right_record_ref",
+                        "review_status",
+                        "created_at",
+                    ]
+                ].rename(
+                    columns={
+                        "result_id": "ID hasil",
+                        "left_source": "Sumber A",
+                        "left_record_ref": "Referensi A",
+                        "right_source": "Sumber B",
+                        "right_record_ref": "Referensi B",
+                        "review_status": "Status review",
+                        "created_at": "Dibuat",
+                    }
+                )
+                st.dataframe(table, use_container_width=True, hide_index=True)
             else:
+                st.info("Belum ada hasil korelasi. Jalankan aturan setelah mengimpor data.")
+        with right:
+            st.subheader("Jalankan korelasi")
+            enabled_rules = [rule for rule in rules if rule["enabled"]]
+            if not enabled_rules:
+                st.info("Tidak ada aturan korelasi aktif.")
+            elif user["role"] in ("admin", "analyst"):
+                rule_by_name = {
+                    f"{rule['rule_code']} · {rule['rule_name']}": rule
+                    for rule in enabled_rules
+                }
+                selected = st.selectbox("Aturan terverifikasi", list(rule_by_name))
+                time_window = st.number_input(
+                    "Jendela waktu (detik)", min_value=0, max_value=86400, value=300
+                )
+                if st.button("Jalankan analisis", type="primary"):
+                    try:
+                        result = api_request(
+                            "POST",
+                            "/analysis/correlate",
+                            data={
+                                "rule_code": rule_by_name[selected]["rule_code"],
+                                "time_window_seconds": int(time_window),
+                            },
+                        )
+                        st.success(
+                            f"Analisis selesai: {result['results_created']} korelasi baru."
+                        )
+                        st.rerun()
+                    except ApiError as exc:
+                        show_error(exc)
+            st.caption(
+                "Pencocokan deterministik menggunakan referensi bersama yang "
+                "diotorisasi dan batas waktu; bukan bukti identitas atau kausalitas."
+            )
+
+            reviewable = [item for item in results if item["review_status"] == "unreviewed"]
+            if reviewable and user["role"] in ("admin", "analyst"):
+                st.subheader("Review hasil")
+                options = {item["result_id"]: item for item in reviewable}
+                selected_id = st.selectbox(
+                    "Hasil belum direview", list(options), format_func=lambda key: (
+                        f"{options[key]['left_record_ref']} ↔ {options[key]['right_record_ref']}"
+                    )
+                )
+                decision = st.selectbox("Keputusan analis", ["confirmed", "rejected"])
+                if st.button("Simpan review"):
+                    try:
+                        api_request(
+                            "POST",
+                            f"/analysis/results/{selected_id}/review",
+                            data={"review_status": decision},
+                        )
+                        st.success("Review tersimpan dan tercatat di audit.")
+                        st.rerun()
+                    except ApiError as exc:
+                        show_error(exc)
+
+    elif section.startswith("▤"):
+        source_col, import_col = st.columns([1.15, 1])
+        with source_col:
+            st.subheader("Sumber data")
+            if sources:
                 st.dataframe(
-                    source_list.rename(
+                    pd.DataFrame(sources)[
+                        ["source_code", "source_name", "source_type", "enabled", "authorized_purpose"]
+                    ].rename(
                         columns={
                             "source_code": "Kode",
-                            "source_name": "Nama sumber",
+                            "source_name": "Nama",
                             "source_type": "Tipe",
                             "enabled": "Aktif",
-                            "authorized_purpose": "Tujuan terotorisasi",
+                            "authorized_purpose": "Tujuan",
                         }
                     ),
                     use_container_width=True,
                     hide_index=True,
                 )
             st.subheader("Riwayat batch impor")
-            if batches.empty:
+            if batches:
+                st.dataframe(
+                    pd.DataFrame(batches)[
+                        ["batch_id", "source_code", "file_name", "status", "records_read",
+                         "records_loaded", "records_rejected", "created_at"]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
                 st.info("Belum ada batch impor.")
-            else:
-                st.dataframe(batches, use_container_width=True, hide_index=True)
+            if user["role"] == "admin":
+                with st.expander("Daftarkan sumber data"):
+                    with st.form("source_form"):
+                        source_code = st.text_input("Kode sumber")
+                        source_name = st.text_input("Nama sumber")
+                        source_type = st.selectbox(
+                            "Tipe sumber",
+                            ["marketplace", "system_log", "population", "other"],
+                        )
+                        purpose = st.text_input("Tujuan terotorisasi")
+                        create = st.form_submit_button("Simpan sumber")
+                    if create:
+                        try:
+                            api_request(
+                                "POST",
+                                "/sources",
+                                data={
+                                    "source_code": source_code,
+                                    "source_name": source_name,
+                                    "source_type": source_type,
+                                    "authorized_purpose": purpose,
+                                },
+                            )
+                            st.success("Sumber tersimpan.")
+                            st.rerun()
+                        except ApiError as exc:
+                            show_error(exc)
+
         with import_col:
-            st.subheader("Input dataset")
-            st.file_uploader(
-                "Pilih CSV, XLSX, atau JSON",
-                type=["csv", "xlsx", "json"],
-                disabled=True,
-                help="Endpoint import belum tersedia; file belum dapat diproses.",
+            st.subheader("Impor dataset")
+            if user["role"] not in ("admin", "analyst"):
+                st.info("Peran viewer hanya dapat membaca data.")
+            elif not any(source["enabled"] for source in sources):
+                st.warning("Tidak ada sumber aktif untuk impor.")
+            else:
+                source_options = {
+                    f"{source['source_name']} ({source['source_code']})": source["source_code"]
+                    for source in sources
+                    if source["enabled"] and source["source_type"] in (
+                        "population", "marketplace", "system_log"
+                    )
+                }
+                if source_options:
+                    selected_source = st.selectbox(
+                        "Sumber terotorisasi", list(source_options)
+                    )
+                    upload = st.file_uploader(
+                        "CSV, XLSX, JSON, atau JSON Lines (.log)",
+                        type=["csv", "xlsx", "json", "log"],
+                        help="Batas ukuran mengikuti MAX_UPLOAD_MB.",
+                    )
+                    if upload and st.button("Validasi & impor", type="primary"):
+                        try:
+                            result = api_request(
+                                "POST",
+                                "/imports",
+                                data={"source_code": source_options[selected_source]},
+                                files={
+                                    "file": (
+                                        upload.name,
+                                        upload.getvalue(),
+                                        upload.type or "application/octet-stream",
+                                    )
+                                },
+                            )
+                            st.success(
+                                f"Batch {result['batch_id']}: "
+                                f"{result['records_loaded']} dimuat, "
+                                f"{result['records_rejected']} ditolak."
+                            )
+                            if result["rejection_summary"]:
+                                st.warning(f"Ringkasan penolakan: {result['rejection_summary']}")
+                            st.rerun()
+                        except ApiError as exc:
+                            show_error(exc)
+                else:
+                    st.info("Daftarkan sumber bertipe population, marketplace, atau system_log.")
+            st.markdown("**Format awal**")
+            st.caption(
+                "Marketplace wajib: transaction_ref, event_time, authorized_join_ref. "
+                "System log: event_time, event_ref, authorized_join_ref. "
+                "Population: record_ref. Timestamp tanpa zona dianggap UTC."
             )
-            st.button("Pilih sumber & impor", disabled=True, use_container_width=True)
-            st.caption("Upload dinonaktifkan sampai validasi dan endpoint API tersedia.")
-        return
 
-    if section.startswith("⌘"):
-        rules_col, audit_col = st.columns(2, gap="medium")
-        with rules_col:
+    elif section.startswith("⌘"):
+        rule_col, review_col = st.columns(2)
+        with rule_col:
             st.subheader("Aturan korelasi")
-            if rules.empty:
-                st.info("Belum ada aturan korelasi di PostgreSQL.")
+            if rules:
+                st.dataframe(
+                    pd.DataFrame(rules)[
+                        ["rule_code", "rule_name", "rule_version", "enabled", "rule_definition"]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
             else:
-                st.dataframe(rules, use_container_width=True, hide_index=True)
-        with audit_col:
-            st.subheader("Aktivitas audit terbaru")
-            if audit.empty:
-                st.info("Belum ada aktivitas audit.")
+                st.info("Belum ada aturan.")
+        with review_col:
+            st.subheader("Review terbaru")
+            if results:
+                st.dataframe(
+                    pd.DataFrame(results)[
+                        ["result_id", "rule_code", "left_record_ref",
+                         "right_record_ref", "review_status", "created_at"]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
             else:
-                st.dataframe(audit, use_container_width=True, hide_index=True)
-        st.caption("Korelasi adalah keterkaitan berbasis aturan; keputusan tetap pada analis.")
-        return
+                st.info("Belum ada hasil review.")
+        st.caption(
+            "Status confirmed/rejected adalah keputusan analis, bukan bukti identitas "
+            "atau wrongdoing."
+        )
 
-    if section.startswith("◉"):
+    else:
         st.subheader("Status layanan")
         st.dataframe(
             pd.DataFrame(
                 [
-                    {"Layanan": "PostgreSQL", "Status": "Terhubung" if db_data else "Belum terhubung"},
-                    {"Layanan": "FastAPI", "Status": "Online" if app_online else "Offline"},
-                    {"Layanan": "Ollama", "Status": "Online" if ollama_online else "Offline"},
+                    {"Layanan": "PostgreSQL", "Status": "Terhubung" if health_db else "Offline"},
+                    {"Layanan": "FastAPI", "Status": "Online" if health_api else "Offline"},
+                    {"Layanan": "Ollama", "Status": "Online" if health_ollama else "Offline"},
                 ]
             ),
             use_container_width=True,
             hide_index=True,
         )
-        st.caption(f"Model lokal yang dikonfigurasi: {settings.ollama_model}")
-        st.subheader("Audit terbaru")
-        if audit.empty:
-            st.info("Belum ada aktivitas audit di PostgreSQL.")
+        st.subheader("Audit keamanan dan analisis")
+        if user["role"] != "admin":
+            st.info("Riwayat audit hanya dapat dilihat administrator.")
         else:
-            st.dataframe(audit, use_container_width=True, hide_index=True)
-        return
-
-    left, right = st.columns([1.62, 1], gap="medium")
-    with left:
-        metric_cols = st.columns(3, gap="small")
-        with metric_cols[0]:
-            metric("SUMBER AKTIF", str(sources), "Terdaftar di PostgreSQL", "green")
-        with metric_cols[1]:
-            metric("BATCH SELESAI", str(batches_completed), f"Dari {batches_total} batch", "blue")
-        with metric_cols[2]:
-            metric("HASIL KORELASI", str(results_total), f"{results_unreviewed} perlu ditinjau", "amber")
-
-        st.markdown(
-            '<div class="panel"><div class="panel-title"><strong>✳ &nbsp;Asisten Intelijen Lokal</strong><span class="muted">Analisis berbasis hasil terverifikasi</span></div></div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            """
-            <div class="chat-card">
-              <div class="chat-role">ASISTEN · PRATINJAU</div>
-              <div class="chat-copy">
-                Tanyakan ringkasan batch atau hasil korelasi yang tersimpan di PostgreSQL.
-                Asisten hanya boleh menjelaskan ringkasan yang sudah diverifikasi, bukan
-                menyimpulkan identitas atau sebab-akibat.
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.text_input(
-            "Pertanyaan",
-            placeholder="Contoh: Ringkas hasil korelasi yang perlu ditinjau...",
-            disabled=True,
-            label_visibility="collapsed",
-        )
-        st.button("Kirim pertanyaan", type="primary", disabled=True, use_container_width=True)
-        st.caption("Chat AI menunggu endpoint FastAPI yang aman; pertanyaan belum dikirim.")
-
-        st.markdown("#### Hasil korelasi terbaru")
-        if results.empty:
-            st.info("Belum ada hasil korelasi tersimpan di PostgreSQL.")
-        else:
-            filtered_results = results
-            filtered_results = filter_by_time(
-                filtered_results, "created_at", time_range
-            )
-            if review_filter != "Semua status":
-                status_map = {
-                    "Belum direview": "unreviewed",
-                    "Dikonfirmasi": "confirmed",
-                    "Ditolak": "rejected",
-                }
-                filtered_results = results[
-                    results["review_status"] == status_map[review_filter]
-                ]
-            st.dataframe(
-                filtered_results.rename(
-                    columns={
-                        "left_source": "Sumber A",
-                        "left_record_ref": "Referensi A",
-                        "right_source": "Sumber B",
-                        "right_record_ref": "Referensi B",
-                        "match_method": "Metode",
-                        "review_status": "Review",
-                        "created_at": "Waktu",
-                    }
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
-        st.caption(
-            "Korelasi bukan bukti identitas, kausalitas, atau pelanggaran. "
-            f"Total record dimuat: {records_loaded}."
-        )
-
-    with right:
-        st.markdown("#### Input & Knowledge Base")
-        st.caption("Dataset terotorisasi · tersimpan di PostgreSQL")
-        st.file_uploader(
-            "Pilih CSV, XLSX, atau JSON",
-            type=["csv", "xlsx", "json"],
-            disabled=True,
-            help="Endpoint import belum tersedia; file belum dapat diproses.",
-        )
-        st.button("Pilih sumber & impor", disabled=True, use_container_width=True)
-        st.caption("Impor akan diaktifkan setelah API dan validasi tersedia.")
-
-        st.markdown("#### Batch terbaru")
-        if batches.empty:
-            st.info("Belum ada batch impor di PostgreSQL.")
-        else:
-            display_batches = batches.copy()
-            display_batches["created_at"] = pd.to_datetime(
-                display_batches["created_at"], errors="coerce"
-            ).dt.strftime("%Y-%m-%d %H:%M")
-            st.dataframe(
-                display_batches.rename(
-                    columns={
-                        "batch_id": "ID batch",
-                        "source_name": "Sumber",
-                        "status": "Status",
-                        "records_loaded": "Dimuat",
-                        "records_rejected": "Ditolak",
-                        "created_at": "Waktu",
-                    }
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        st.markdown("#### Aturan korelasi terverifikasi")
-        if rules.empty:
-            st.info("Belum ada aturan korelasi terdaftar di PostgreSQL.")
-        else:
-            for rule in rules.itertuples(index=False):
-                status = "AKTIF" if rule.enabled else "NONAKTIF"
-                rule_code = escape(str(rule.rule_code))
-                rule_name = escape(str(rule.rule_name))
-                st.markdown(
-                    f"""
-                    <div class="rule-card">
-                      <div class="panel-title">
-                        <span class="rule-code">{rule_code} · v{rule.rule_version}</span>
-                        <span class="muted">{status}</span>
-                      </div>
-                      <div class="rule-name">{rule_name}</div>
-                      <div class="rule-note">Aturan terdaftar · keputusan tetap pada analis</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
+            try:
+                audit = api_request("GET", "/audit?limit=100")
+                st.dataframe(
+                    pd.DataFrame(audit) if audit else pd.DataFrame(),
+                    use_container_width=True,
+                    hide_index=True,
                 )
-
-    with st.expander("Status layanan dan konfigurasi"):
-        st.write(
-            {
-                "PostgreSQL": "connected" if db_data else "not connected",
-                "FastAPI": "online" if app_online else "offline",
-                "Ollama": "online" if ollama_online else "offline",
-                "Ollama model": settings.ollama_model,
-            }
-        )
-        if not db_data:
-            st.caption("Detail koneksi tidak ditampilkan agar kredensial database tidak bocor.")
+            except ApiError as exc:
+                show_error(exc)
 
 
 if __name__ == "__main__":

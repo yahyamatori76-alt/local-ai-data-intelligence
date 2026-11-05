@@ -29,6 +29,8 @@ Pastikan Docker Engine dan Docker Compose sudah tersedia di server. Tidak perlu 
 3. Edit `.env`:
    - Biarkan `SERVER_BIND_IP=192.168.1.89` jika itu memang IP server.
    - Ganti `POSTGRES_PASSWORD` dengan password acak kuat 32+ karakter alfanumerik.
+   - Ganti `APP_ADMIN_PASSWORD` dengan password admin yang berbeda, minimal 12 karakter dan maksimal 72 byte UTF-8.
+   - Catat username/password admin secara aman. Untuk menampilkan nilai pada server: `grep '^APP_ADMIN_' .env` (jangan kirim output ke chat atau commit).
    - Atur `POSTGRES_DB`/`POSTGRES_USER` hanya jika diperlukan.
    - Jangan commit atau mengirim `.env`.
 4. Build image, pasang dependency di dalam image, dan jalankan stack:
@@ -39,7 +41,7 @@ Pastikan Docker Engine dan Docker Compose sudah tersedia di server. Tidak perlu 
    docker compose ps
    ```
 
-   Saat volume PostgreSQL baru dibuat, migrasi awal dari `migrations/001_initial_schema.sql` diterapkan otomatis. Docker menyimpan database, model, dan dependency di volume/image yang sesuai.
+   Saat volume baru dibuat, skema awal diterapkan PostgreSQL. API menerapkan migrasi operasional `002` saat startup dan membuat akun admin serta sumber/rule awal secara idempotent.
 5. Unduh model lokal ke Ollama container satu kali:
 
    ```sh
@@ -63,9 +65,31 @@ docker compose ps
 
 Volume `postgres_data` dan `ollama_data` tetap dipertahankan. Jangan gunakan `docker compose down -v`, karena opsi tersebut menghapus volume database dan model. Migrasi baru untuk database yang sudah ada harus dijalankan secara eksplisit; file migrasi awal tidak otomatis dijalankan ulang pada volume lama.
 
-## Dashboard dan cakupan MVP saat ini
+## Penggunaan dashboard
 
-Dashboard menampilkan status layanan dan membaca ringkasan sumber, batch, aturan, audit, serta hasil korelasi dari PostgreSQL. Jika database belum tersedia, dashboard menampilkan peringatan dan keadaan kosong, bukan data contoh seolah nyata. Upload dan chat AI masih dinonaktifkan sampai endpoint operasional dan kontrol aksesnya diimplementasikan.
+1. Masuk ke `http://192.168.1.89:8501` menggunakan akun admin dari `.env`.
+2. Pada **Input & Knowledge Base**, pilih sumber terotorisasi dan unggah file CSV/XLSX/JSON. System log menerima JSON Lines (`.log`). Data uji tersedia di `data/synthetic/`.
+3. Jalankan `TX_EVENT_300S` dari halaman **AI Chat & Analisis** setelah file transaksi dan event diimpor.
+4. Tinjau atau tolak korelasi yang belum direview; aktivitas tersimpan di audit.
+5. Chat mengirim pertanyaan dan ringkasan agregat terverifikasi saja ke Ollama lokal. Jangan masukkan data pribadi ke prompt.
+
+Format impor minimum:
+
+- Marketplace: `transaction_ref,event_time,authorized_join_ref`; `status`, `amount`, dan `currency` opsional.
+- System log: `event_time,event_ref,authorized_join_ref`; `severity`, `event_type`, dan `message` opsional.
+- Population: `record_ref`; `masked_identity_ref`, `region_code`, dan atribut tambahan opsional. Kolom pengenal pribadi mentah seperti nama, NIK, email, telepon, atau alamat ditolak.
+
+Timestamp tanpa zona waktu dianggap UTC. Duplikat referensi dalam satu file ditolak per baris; alasan penolakan disimpan tanpa isi sensitif baris. Batas default upload 100 MB.
+
+Admin dapat membuat akun `analyst`/`viewer` melalui endpoint `POST /auth/users` dengan HTTP Basic. Endpoint operasional mewajibkan autentikasi; peran admin mengelola sumber dan user, analyst/admin dapat impor, korelasi dan review, sedangkan viewer hanya membaca.
+
+Jalankan acceptance/unit tests di server:
+
+```sh
+docker compose exec api pytest -q
+```
+
+Semua metrik, status batch, hasil, dan aktivitas dashboard dibaca melalui API terautentikasi dari PostgreSQL; dashboard tidak mendapat kredensial database.
 
 ## Keamanan jaringan
 
@@ -80,7 +104,7 @@ Dashboard menampilkan status layanan dan membaca ringkasan sumber, batch, aturan
 docker compose exec -T postgres pg_dump -U app_user -d local_ai_intel > local_ai_intel-backup.sql
 ```
 
-Simpan backup dengan akses terbatas di luar repository. Sesuaikan user/database jika `.env` menggunakan nama lain.
+Simpan backup dengan akses terbatas di luar repository. Sesuaikan user/database jika `.env` menggunakan nama lain. Untuk restore ke database yang sudah ada, hentikan penulis aplikasi dan uji restore pada backup terpisah sebelum memulihkan data.
 
 ## Struktur utama
 
