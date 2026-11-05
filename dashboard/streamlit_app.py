@@ -441,8 +441,12 @@ def main() -> None:
                 st.info("Peran viewer tidak dapat mengunggah atau mencari dokumen.")
             else:
                 document = st.file_uploader(
-                    "PDF, TXT, DOC/DOCX, ODT, RTF, HTML, atau Markdown",
-                    type=["pdf", "txt", "doc", "docx", "odt", "rtf", "html", "htm", "md"],
+                    "PDF, teks, Office, gambar, dan format dokumen umum",
+                    type=[
+                        "pdf", "txt", "md", "csv", "doc", "docx", "docm",
+                        "xls", "xlsx", "xlsm", "ppt", "pptx", "odt", "rtf",
+                        "html", "htm", "png", "jpg", "jpeg", "tif", "tiff", "bmp",
+                    ],
                     help=(
                         "PDF hasil pindai diproses dengan OCR Indonesia/Inggris. "
                         "Batas upload mengikuti MAX_UPLOAD_MB."

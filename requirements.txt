@@ -19,3 +19,5 @@ pymupdf
 pytesseract
 Pillow
 striprtf
+python-pptx
+xlrd

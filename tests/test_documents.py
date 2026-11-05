@@ -1,8 +1,10 @@
 from io import BytesIO
 
-import fitz
+import openpyxl
+import pymupdf
 import pytest
 from docx import Document
+from pptx import Presentation
 
 from app.ingestion.document_reader import (
     DocumentPage,
@@ -33,8 +35,39 @@ def test_docx_paragraphs_and_tables_are_extracted():
     assert "NIK | 1234567890123456" in result.pages[0].text
 
 
+def test_spreadsheet_and_presentation_text_are_extracted():
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Pembeli"
+    sheet.append(["nama", "nik"])
+    sheet.append(["Budi Contoh", "1234567890123456"])
+    workbook_buffer = BytesIO()
+    workbook.save(workbook_buffer)
+    spreadsheet = extract_document("buyers.xlsx", workbook_buffer.getvalue())
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    slide.shapes.title.text = "Ringkasan Pembeli"
+    text_buffer = BytesIO()
+    presentation.save(text_buffer)
+    slides = extract_document("buyers.pptx", text_buffer.getvalue())
+
+    assert "Budi Contoh" in spreadsheet.pages[0].text
+    assert "1234567890123456" in spreadsheet.pages[0].text
+    assert "Ringkasan Pembeli" in slides.pages[0].text
+
+
+def test_csv_is_read_as_document_text():
+    result = extract_document(
+        "buyers.csv", b"nama,nik\nBudi Contoh,1234567890123456\n"
+    )
+
+    assert "nama: Budi Contoh" in result.pages[0].text
+    assert "nik: 1234567890123456" in result.pages[0].text
+
+
 def test_pdf_text_is_extracted_with_page_number():
-    document = fitz.open()
+    document = pymupdf.open()
     page = document.new_page()
     page.insert_text((72, 72), "Nama: Siti NIK: 1234567890123456")
     content = document.tobytes()

@@ -7,19 +7,28 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+import csv
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree
 
 import pymupdf
+import openpyxl
+import xlrd
 import pytesseract
 from docx import Document
 from docx.opc.exceptions import PackageNotFoundError
 from PIL import Image
+from pptx import Presentation
+from pptx.exc import PackageNotFoundError as PptxPackageNotFoundError
 from striprtf.striprtf import rtf_to_text
 
-SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".doc", ".docx", ".odt", ".rtf", ".html", ".htm", ".md"}
+SUPPORTED_EXTENSIONS = {
+    ".pdf", ".txt", ".md", ".csv", ".doc", ".docx", ".docm",
+    ".xls", ".xlsx", ".xlsm", ".ppt", ".pptx", ".odt", ".rtf",
+    ".html", ".htm", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp",
+}
 MAX_EXTRACTED_CHARACTERS = 10_000_000
 MAX_PDF_PAGES = 1000
 MAX_OCR_PAGES = 20
@@ -77,7 +86,7 @@ def extract_document(filename: str, content: bytes) -> ExtractedDocument:
         pages = [DocumentPage(None, _decode_text(content))]
         ocr_pages = 0
         page_count = None
-    elif extension == ".docx":
+    elif extension in {".docx", ".docm"}:
         pages = [_extract_docx(content)]
         ocr_pages = 0
         page_count = None
@@ -85,10 +94,34 @@ def extract_document(filename: str, content: bytes) -> ExtractedDocument:
         pages = [_extract_doc(content)]
         ocr_pages = 0
         page_count = None
+    elif extension in {".xlsx", ".xlsm"}:
+        pages = [_extract_xlsx(content)]
+        ocr_pages = 0
+        page_count = None
+    elif extension == ".xls":
+        pages = [_extract_xls(content)]
+        ocr_pages = 0
+        page_count = None
+    elif extension == ".pptx":
+        pages = _extract_pptx(content)
+        ocr_pages = 0
+        page_count = len(pages)
+    elif extension == ".ppt":
+        pages = [_extract_ppt(content)]
+        ocr_pages = 0
+        page_count = None
+    elif extension == ".csv":
+        pages = [DocumentPage(None, _extract_csv(content))]
+        ocr_pages = 0
+        page_count = None
     elif extension == ".odt":
         pages = [_extract_odt(content)]
         ocr_pages = 0
         page_count = None
+    elif extension in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}:
+        pages = [_extract_image(content)]
+        ocr_pages = 1
+        page_count = 1
     elif extension == ".rtf":
         pages = [DocumentPage(None, rtf_to_text(_decode_text(content)))]
         ocr_pages = 0
@@ -214,6 +247,144 @@ def _extract_doc(content: bytes) -> DocumentPage:
     if result.returncode:
         raise ValueError("Dokumen DOC tidak dapat dibaca.")
     return DocumentPage(None, result.stdout.decode("utf-8", errors="replace"))
+
+
+def _extract_xlsx(content: bytes) -> DocumentPage:
+    _validate_office_archive(content)
+    try:
+        workbook = openpyxl.load_workbook(
+            io.BytesIO(content), read_only=True, data_only=True
+        )
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        raise ValueError("Dokumen XLSX tidak dapat dibaca.") from exc
+    parts: list[str] = []
+    row_count = 0
+    try:
+        for sheet in workbook.worksheets:
+            parts.append(f"[Sheet: {sheet.title}]")
+            rows = sheet.iter_rows(values_only=True)
+            headers = next(rows, ())
+            for row in rows:
+                row_count += 1
+                if row_count > 100_000:
+                    raise ValueError("Spreadsheet melebihi batas 100.000 baris.")
+                fields = [
+                    f"{headers[index] if index < len(headers) and headers[index] else f'kolom_{index + 1}'}: {value}"
+                    for index, value in enumerate(row)
+                    if value is not None and str(value).strip()
+                ]
+                if fields:
+                    parts.append(" | ".join(fields))
+    finally:
+        workbook.close()
+    return DocumentPage(None, "\n".join(parts))
+
+
+def _extract_xls(content: bytes) -> DocumentPage:
+    try:
+        workbook = xlrd.open_workbook(file_contents=content, on_demand=True)
+    except (xlrd.XLRDError, ValueError) as exc:
+        raise ValueError("Dokumen XLS tidak dapat dibaca.") from exc
+    parts: list[str] = []
+    row_count = 0
+    for sheet in workbook.sheets():
+        parts.append(f"[Sheet: {sheet.name}]")
+        headers = sheet.row_values(0) if sheet.nrows else []
+        for row_index in range(1, sheet.nrows):
+            row_count += 1
+            if row_count > 100_000:
+                raise ValueError("Spreadsheet melebihi batas 100.000 baris.")
+            values = sheet.row_values(row_index)
+            fields = [
+                f"{headers[index] if index < len(headers) and headers[index] else f'kolom_{index + 1}'}: {value}"
+                for index, value in enumerate(values)
+                if value not in ("", None)
+            ]
+            if fields:
+                parts.append(" | ".join(fields))
+    workbook.release_resources()
+    return DocumentPage(None, "\n".join(parts))
+
+
+def _extract_csv(content: bytes) -> str:
+    text = _decode_text(content)
+    rows = csv.reader(io.StringIO(text))
+    headers = next(rows, [])
+    parts = []
+    for row_index, row in enumerate(rows, start=1):
+        if row_index > 100_000:
+            raise ValueError("CSV melebihi batas 100.000 baris.")
+        fields = [
+            f"{headers[index] if index < len(headers) and headers[index] else f'kolom_{index + 1}'}: {value}"
+            for index, value in enumerate(row)
+            if value.strip()
+        ]
+        if fields:
+            parts.append(" | ".join(fields))
+    return "\n".join(parts)
+
+
+def _extract_pptx(content: bytes) -> list[DocumentPage]:
+    _validate_office_archive(content)
+    try:
+        presentation = Presentation(io.BytesIO(content))
+    except (
+        OSError,
+        ValueError,
+        zipfile.BadZipFile,
+        PptxPackageNotFoundError,
+    ) as exc:
+        raise ValueError("Dokumen PPTX tidak dapat dibaca.") from exc
+    pages = []
+    for slide_number, slide in enumerate(presentation.slides, start=1):
+        parts = []
+        for shape in slide.shapes:
+            if shape.has_text_frame and shape.text.strip():
+                parts.append(shape.text)
+            if shape.has_table:
+                parts.extend(
+                    " | ".join(cell.text for cell in row.cells)
+                    for row in shape.table.rows
+                )
+        if parts:
+            pages.append(DocumentPage(slide_number, "\n".join(parts)))
+    return pages
+
+
+def _extract_ppt(content: bytes) -> DocumentPage:
+    executable = shutil.which("catppt")
+    if executable is None:
+        raise ValueError("Pembaca dokumen PPT lama tidak tersedia.")
+    with tempfile.NamedTemporaryFile(suffix=".ppt") as temporary:
+        temporary.write(content)
+        temporary.flush()
+        try:
+            result = subprocess.run(
+                [executable, temporary.name],
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("Waktu pembacaan dokumen PPT habis.") from exc
+    if result.returncode:
+        raise ValueError("Dokumen PPT tidak dapat dibaca.")
+    return DocumentPage(None, result.stdout.decode("utf-8", errors="replace"))
+
+
+def _extract_image(content: bytes) -> DocumentPage:
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            if image.width * image.height > 40_000_000:
+                raise ValueError("Resolusi gambar melebihi batas pemrosesan OCR.")
+            text = pytesseract.image_to_string(
+                image.convert("RGB"), lang="ind+eng", timeout=15
+            )
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise ValueError("Gambar tidak dapat dibaca untuk OCR.") from exc
+    except (pytesseract.TesseractNotFoundError, RuntimeError) as exc:
+        raise ValueError("OCR gambar tidak tersedia atau waktu pemrosesan habis.") from exc
+    return DocumentPage(1, text)
 
 
 def _extract_odt(content: bytes) -> DocumentPage:

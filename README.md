@@ -69,7 +69,7 @@ Volume `postgres_data` dan `ollama_data` tetap dipertahankan. Jangan gunakan `do
 
 1. Masuk ke `http://192.168.1.89:8501` menggunakan akun admin dari `.env`.
 2. Pada **Input & Knowledge Base**, pilih sumber terotorisasi dan unggah file CSV/XLSX/JSON. System log menerima JSON Lines (`.log`). Data uji tersedia di `data/synthetic/`.
-3. Pada **Dokumen & Pencarian**, unggah PDF, TXT, DOC/DOCX, ODT, RTF, HTML, atau Markdown. PDF hasil pindai diproses dengan OCR Tesseract bahasa Indonesia/Inggris. Dokumen dipecah menjadi bagian dan indeks teksnya disimpan di PostgreSQL lokal; file asli tidak disimpan.
+3. Pada **Dokumen & Pencarian**, unggah PDF, TXT/Markdown/CSV, DOC/DOCX, XLS/XLSX, PPT/PPTX, ODT, RTF, HTML, atau gambar PNG/JPG/TIFF/BMP. PDF dan gambar hasil pindai diproses dengan OCR Tesseract bahasa Indonesia/Inggris. Dokumen dipecah menjadi bagian dan indeks teksnya disimpan di PostgreSQL lokal; file asli tidak disimpan.
 4. Cari NIK 16 digit secara tepat atau nama/teks secara penuh/parsial. Hanya kutipan yang ditemukan di dokumen lokal yang dikirim ke Ollama lokal untuk diringkas, dengan nama file/halaman sebagai sumber. Dokumen tidak dikirim ke layanan cloud.
 5. Jalankan `TX_EVENT_300S` dari halaman **AI Chat & Analisis** setelah file transaksi dan event diimpor.
 6. Tinjau atau tolak korelasi yang belum direview; aktivitas tersimpan di audit.
