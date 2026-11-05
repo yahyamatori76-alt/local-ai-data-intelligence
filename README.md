@@ -68,12 +68,12 @@ Volume `postgres_data` dan `ollama_data` tetap dipertahankan. Jangan gunakan `do
 ## Penggunaan dashboard
 
 1. Masuk ke `http://192.168.1.89:8501` menggunakan akun admin dari `.env`.
-2. Pada **Input & Knowledge Base**, pilih sumber terotorisasi dan unggah file CSV/XLSX/JSON. System log menerima JSON Lines (`.log`). Data uji tersedia di `data/synthetic/`.
-3. Pada **Dokumen & Pencarian**, unggah PDF, TXT/Markdown/CSV, DOC/DOCX, XLS/XLSX, PPT/PPTX, ODT, RTF, HTML, atau gambar PNG/JPG/TIFF/BMP. PDF dan gambar hasil pindai diproses dengan OCR Tesseract bahasa Indonesia/Inggris. Dokumen dipecah menjadi bagian dan indeks teksnya disimpan di PostgreSQL lokal; file asli tidak disimpan.
+2. Pada **Impor Data Terstruktur**, unggah CSV/XLSX/JSON atau system log JSON Lines (`.log`) dengan kolom sesuai tipe sumber. Data dinormalisasi ke tabel marketplace, system events, atau population untuk hitung dan korelasi. Data uji tersedia di `data/synthetic/`.
+3. Pada **Dokumen & Pencarian (RAG)**, unggah PDF, TXT/Markdown/CSV, DOC/DOCX, XLS/XLSX, PPT/PPTX, ODT, RTF, HTML, atau gambar PNG/JPG/TIFF/BMP. Menu ini mengekstrak/OCR isi dokumen dan mengindeks teksnya untuk pencarian serta analisis AI; data tidak dimasukkan sebagai record transaksi/event. PDF dan gambar hasil pindai diproses dengan OCR Tesseract bahasa Indonesia/Inggris. Teks indeks disimpan di PostgreSQL lokal; file asli tidak disimpan.
 4. Halaman **AI Chat & Analisis** juga mencari indeks dokumen lokal terlebih dahulu untuk admin/analyst. Jika ditemukan bukti, Ollama lokal menganalisis kutipan tersebut dan dashboard menampilkan file, halaman, serta cuplikannya. Jika tidak ada dokumen cocok, chat menggunakan ringkasan agregat terverifikasi yang lama. Pencarian NIK 16 digit harus tepat (tanda hubung/spasi diperbolehkan); viewer tidak bisa mencari NIK/dokumen. Dokumen tidak dikirim ke layanan cloud.
 5. Jalankan `TX_EVENT_300S` dari halaman **AI Chat & Analisis** setelah file transaksi dan event diimpor.
 6. Tinjau atau tolak korelasi yang belum direview; aktivitas tersimpan di audit.
-7. Pencarian detail dokumen dapat dilakukan lewat **Dokumen & Pencarian**; keduanya menggunakan indeks PostgreSQL lokal yang sama.
+7. Gunakan **Impor Data Terstruktur** untuk analitik berbasis kolom/korelasi, dan **Dokumen & Pencarian (RAG)** untuk membaca serta mencari isi dokumen. CSV/XLSX dapat dipakai di keduanya, tetapi hasilnya berbeda: record terstruktur vs teks dokumen yang dapat dicari.
 
 Format impor minimum:
 

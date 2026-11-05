@@ -257,12 +257,12 @@ def main() -> None:
         st.markdown("---")
         navigation = [
             "✳  AI Chat & Analisis",
-            "▤  Input & Knowledge Base",
+            "▤  Impor Data Terstruktur",
             "⌘  Aturan & Audit",
             "◉  Audit & Status Sistem",
         ]
         if user["role"] in ("admin", "analyst"):
-            navigation.insert(1, "⌕  Dokumen & Pencarian")
+            navigation.insert(1, "⌕  Dokumen & Pencarian (RAG)")
         section = st.radio(
             "NAVIGASI",
             navigation,
@@ -440,7 +440,12 @@ def main() -> None:
                         show_error(exc)
 
     elif section.startswith("⌕"):
-        st.subheader("Basis pengetahuan dokumen lokal")
+        st.subheader("Pustaka Dokumen — OCR & RAG")
+        st.caption(
+            "Untuk PDF, dokumen Office, teks, dan hasil pindai yang ingin dibaca, "
+            "dicari, lalu diringkas AI. Teks diindeks ke PostgreSQL; data tidak "
+            "diubah menjadi transaksi atau event terstruktur."
+        )
         st.warning(
             "Dokumen dan pencarian berisi data sensitif disimpan di PostgreSQL server lokal. "
             "Hanya admin/analyst yang dapat mengunggah dan mencari; gunakan hanya data "
@@ -563,6 +568,12 @@ def main() -> None:
                 st.info("Tidak ditemukan kecocokan dalam dokumen yang terindeks.")
 
     elif section.startswith("▤"):
+        st.subheader("Impor Data Terstruktur")
+        st.caption(
+            "Untuk dataset dengan kolom yang jelas (marketplace, system log, atau "
+            "population) yang akan divalidasi dan disimpan ke tabel PostgreSQL "
+            "agar dapat dihitung serta dikorelasikan dengan aturan analisis."
+        )
         source_col, import_col = st.columns([1.15, 1])
         with source_col:
             st.subheader("Sumber data")
@@ -623,7 +634,12 @@ def main() -> None:
                             show_error(exc)
 
         with import_col:
-            st.subheader("Impor dataset")
+            st.subheader("Impor dataset terstruktur")
+            st.info(
+                "Pilih menu ini jika Anda ingin hasil impor masuk ke tabel "
+                "transaksi/event dan dapat dipakai untuk korelasi. Untuk mencari "
+                "isi dokumen atau OCR, gunakan **Dokumen & Pencarian (RAG)**."
+            )
             if user["role"] not in ("admin", "analyst"):
                 st.info("Peran viewer hanya dapat membaca data.")
             elif not any(source["enabled"] for source in sources):
