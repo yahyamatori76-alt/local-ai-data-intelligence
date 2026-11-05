@@ -262,14 +262,18 @@ calibrated.
 
 ### FR-007: Local AI Chat
 
-The system shall send prompts to a locally hosted Ollama instance.
+For admin and analyst users, the system shall first retrieve matching
+authorized local document excerpts and send those excerpts to a locally
+hosted Ollama instance when matches exist. If there are no document
+matches, chat may explain verified aggregate summaries.
 
 **Acceptance criteria** - The backend can check whether Ollama is
 reachable. - The selected model is configurable. - The API reports a
 controlled error when Ollama is unavailable. - The LLM is instructed not
 to invent findings or claim it queried data that was not supplied. -
-Chat responses based on data must use verified result summaries supplied
-by the backend.
+Document-grounded chat responses cite retrieved excerpts supplied by the
+backend. - Admin/analyst can search a 16-digit NIK exactly in chat;
+viewer cannot search documents or NIKs through chat.
 
 ### FR-008: Dashboard
 

@@ -29,7 +29,7 @@ router = APIRouter()
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "100")) * 1024 * 1024
 MAX_DOCUMENT_CHUNKS = 10_000
 MAX_SEARCH_RESULTS = 8
-NIK_PATTERN = re.compile(r"(?<!\d)\d{16}(?!\d)")
+NIK_PATTERN = re.compile(r"(?<!\d)(?:\d[\s-]?){15}\d(?!\d)")
 
 
 class DocumentSearchRequest(BaseModel):
@@ -193,7 +193,7 @@ def search_documents(
 ) -> dict[str, Any]:
     query = payload.query
     nik_match = NIK_PATTERN.search(query)
-    nik = nik_match.group(0) if nik_match else None
+    nik = re.sub(r"\D", "", nik_match.group(0)) if nik_match else None
     nik_pattern = r"[\s-]?".join(nik) if nik else None
     nik_regex = (
         f"(^|[^0-9]){nik_pattern}([^0-9]|$)" if nik_pattern else None

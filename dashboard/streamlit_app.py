@@ -318,8 +318,10 @@ def main() -> None:
         with left:
             st.subheader("Asisten Intelijen Lokal")
             st.warning(
-                "AI hanya menjelaskan ringkasan agregat terverifikasi. "
-                "Jangan masukkan data pribadi; hasil harus divalidasi analis."
+                "Chat admin/analyst mencari indeks dokumen lokal terlebih dahulu, "
+                "termasuk NIK secara tepat, lalu menyertakan kutipan sumber. "
+                "Jika tidak ada dokumen yang cocok, chat menggunakan ringkasan "
+                "agregat. Jangan masukkan email/telepon."
             )
             with st.form("chat_form", clear_on_submit=True):
                 question = st.text_area(
@@ -340,6 +342,16 @@ def main() -> None:
                         f'<div>{escape(answer["answer"])}</div><br><span class="muted">{escape(answer["limitations"])}</span></div>',
                         unsafe_allow_html=True,
                     )
+                    for index, source in enumerate(answer["sources"], start=1):
+                        page = (
+                            f" · halaman {source['page_number']}"
+                            if source["page_number"]
+                            else ""
+                        )
+                        with st.expander(
+                            f"[{index}] {source['file_name']}{page}"
+                        ):
+                            st.text(source["excerpt"])
                 except ApiError as exc:
                     show_error(exc)
 

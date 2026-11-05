@@ -45,7 +45,7 @@ def test_admin_can_authenticate_and_read_sources():
         ).status_code == 200
 
 
-def test_local_documents_are_indexed_and_searchable_with_exact_nik():
+def test_local_documents_are_indexed_searchable_and_used_by_chat(monkeypatch):
     from sqlalchemy import text
 
     from app.db.repositories import get_engine
@@ -57,6 +57,10 @@ def test_local_documents_are_indexed_and_searchable_with_exact_nik():
     padded_nik = f"9{nik}"
     document_ids = []
     viewer_name = None
+    monkeypatch.setattr(
+        "app.api.routes_documents.answer_from_documents",
+        lambda base_url, model, query, matches: "NIK dan nama ditemukan. [1]",
+    )
     try:
         with TestClient(app) as client:
             exact = client.post(
@@ -113,6 +117,20 @@ def test_local_documents_are_indexed_and_searchable_with_exact_nik():
                 match["document_id"] for match in search.json()["matches"]
             } == set(document_ids[:2])
 
+            chat = client.post(
+                "/chat",
+                auth=admin,
+                json={
+                    "question": (
+                        f"Cari NIK {nik[:4]}-{nik[4:8]}-{nik[8:12]}-{nik[12:]} "
+                        "dan analisis dokumennya"
+                    )
+                },
+            )
+            assert chat.status_code == 200, chat.text
+            assert chat.json()["context"] == "local_document_rag"
+            assert chat.json()["sources"][0]["document_id"] == document_ids[0]
+
             viewer_name = f"document-viewer-{uuid.uuid4().hex[:8]}"
             viewer_password = f"{uuid.uuid4().hex}Aa9!"
             viewer = client.post(
@@ -130,6 +148,11 @@ def test_local_documents_are_indexed_and_searchable_with_exact_nik():
                 "/documents/search",
                 auth=viewer_credentials,
                 json={"query": nik, "ask_ai": False},
+            ).status_code == 403
+            assert client.post(
+                "/chat",
+                auth=viewer_credentials,
+                json={"question": f"Cari NIK {nik}"},
             ).status_code == 403
     finally:
         if document_ids or viewer_name:
