@@ -92,12 +92,44 @@ def metric(label: str, value: str, note: str, accent: str) -> None:
 
 
 def show_login(settings: DashboardSettings) -> bool:
-    st.markdown("## ✳ Local Intelligence")
-    st.caption("Masuk dengan akun lokal yang dibuat administrator.")
-    with st.form("login_form"):
-        username = st.text_input("Nama pengguna")
-        password = st.text_input("Kata sandi", type="password")
-        submitted = st.form_submit_button("Masuk", type="primary")
+    intro, login = st.columns([1.05, 0.95], gap="large")
+    with intro:
+        st.markdown(
+            """
+            <div class="login-intro">
+              <div class="login-mark">✳</div>
+              <div class="login-eyebrow">LOCAL AI DATA INTELLIGENCE</div>
+              <h1>Analisis yang tetap<br><span>di lingkungan lokal.</span></h1>
+              <p>Kelola sumber, tinjau korelasi, dan jelajahi ringkasan
+              analisis dalam satu ruang kerja yang terkontrol.</p>
+              <div class="login-badges">
+                <span>PostgreSQL</span><span>Ollama lokal</span><span>Akses berbasis peran</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with login:
+        st.markdown(
+            """
+            <div class="login-heading">
+              <div class="login-eyebrow">SELAMAT DATANG</div>
+              <h2>Masuk ke ruang kerja</h2>
+              <p>Gunakan akun yang diberikan administrator.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.form("login_form"):
+            username = st.text_input(
+                "Nama pengguna", placeholder="Masukkan nama pengguna"
+            )
+            password = st.text_input(
+                "Kata sandi", type="password", placeholder="Masukkan kata sandi"
+            )
+            submitted = st.form_submit_button(
+                "Masuk dengan aman  →", type="primary", use_container_width=True
+            )
     if submitted:
         try:
             response = httpx.get(
@@ -160,7 +192,36 @@ def main() -> None:
         .chat-role,.rule-code{color:var(--green);font-size:.72rem;font-weight:700}
         .stButton button,.stFormSubmitButton button{border-radius:7px}
         div[data-testid="stDataFrame"]{border:1px solid var(--border);border-radius:8px}
-        @media(max-width:800px){.block-container{padding:.8rem}}
+        .login-intro{padding:clamp(1.5rem,5vw,4rem) 1rem 2rem 0}
+        .login-mark{display:grid;place-items:center;width:48px;height:48px;
+          margin-bottom:2rem;border:1px solid #285147;border-radius:14px;
+          background:#102a29;color:var(--green);font-size:1.55rem}
+        .login-eyebrow{color:var(--green);font-size:.72rem;font-weight:750;
+          letter-spacing:.14em}
+        .login-intro h1{margin:.8rem 0 1rem;font-size:clamp(2rem,4vw,3.35rem)!important;
+          line-height:1.08;letter-spacing:-.045em}
+        .login-intro h1 span{color:var(--green)}
+        .login-intro p,.login-heading p{max-width:34rem;color:var(--muted);
+          line-height:1.7;font-size:.95rem}
+        .login-badges{display:flex;flex-wrap:wrap;gap:.55rem;margin-top:1.5rem}
+        .login-badges span{padding:.45rem .7rem;border:1px solid var(--border);
+          border-radius:999px;background:#0d1827;color:#b8c8d9;font-size:.72rem}
+        .login-heading{padding:1rem 0 .4rem}
+        .login-heading h2{margin:.45rem 0;font-size:1.65rem!important}
+        div[data-testid="stForm"]{padding:1.35rem;border:1px solid var(--border);
+          border-radius:16px;background:linear-gradient(145deg,#101d2e,#0c1625);
+          box-shadow:0 24px 70px rgba(0,0,0,.24)}
+        div[data-testid="stForm"] label{font-size:.84rem;font-weight:600}
+        div[data-testid="stForm"] input{min-height:2.9rem;border-radius:9px}
+        div[data-testid="stForm"] button{min-height:2.9rem;border-radius:9px;
+          font-weight:700}
+        @media(max-width:800px){
+          .block-container{padding:1rem}
+          .login-intro{padding:1rem 0 .5rem}
+          .login-mark{margin-bottom:1.1rem}
+          .login-intro h1{font-size:2rem!important}
+          div[data-testid="stForm"]{padding:1rem}
+        }
         </style>
         """,
         unsafe_allow_html=True,
